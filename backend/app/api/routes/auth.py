@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user, get_db
 from app.schemas.auth import UserLogin, UserRegister, TokenResponse
 from app.services.auth import login_user, register_user
+from app.db.crud import get_user_by_email
 
 
 router = APIRouter(
@@ -17,6 +18,18 @@ def register(
     user_data: UserRegister,
     db: Session = Depends(get_db),
 ):
+    # Check whether email already exists
+    existing_user = get_user_by_email(
+        db=db,
+        email=user_data.email,
+    )
+
+    if existing_user:
+        raise HTTPException(
+            status_code=400,
+            detail="An account with this email already exists.",
+        )
+
     try:
         user = register_user(
             db=db,
@@ -30,12 +43,14 @@ def register(
             "email": user.email,
         }
 
-    except Exception:
+    except Exception as error:
         db.rollback()
 
+        print("REGISTER ERROR:", repr(error))
+
         raise HTTPException(
-            status_code=400,
-            detail="Could not register user",
+            status_code=500,
+            detail="Could not register user.",
         )
 
 

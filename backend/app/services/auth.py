@@ -44,18 +44,28 @@ def login_user(
     db: Session,
     user_data: UserLogin,
 ) -> str | None:
+
     user = get_user_by_email(
         db=db,
         email=user_data.email,
     )
 
+    print("LOGIN EMAIL:", user_data.email)
+    print("USER FOUND:", user is not None)
+
     if user is None:
         return None
 
-    if not verify_password(
+    print("STORED HASH:", user.password_hash)
+
+    password_valid = verify_password(
         user_data.password,
         user.password_hash,
-    ):
+    )
+
+    print("PASSWORD VALID:", password_valid)
+
+    if not password_valid:
         return None
 
     return create_access_token(user.id)
