@@ -2,9 +2,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, get_db
+from app.db.crud import get_user_by_email
 from app.schemas.auth import UserLogin, UserRegister, TokenResponse
 from app.services.auth import login_user, register_user
-from app.db.crud import get_user_by_email
 
 
 router = APIRouter(
@@ -18,7 +18,9 @@ def register(
     user_data: UserRegister,
     db: Session = Depends(get_db),
 ):
-    # Check whether email already exists
+    """Register a new ClarifyAI user."""
+
+    # Check whether the email is already registered.
     existing_user = get_user_by_email(
         db=db,
         email=user_data.email,
@@ -43,11 +45,15 @@ def register(
             "email": user.email,
         }
 
-    except Exception as error:
+    except Exception:
+        # Roll back the transaction so the current database
+        # session is left in a usable state.
         db.rollback()
 
-        print("REGISTER ERROR:", repr(error))
-
+        # Do not expose the underlying exception to the client
+        # or print it to application output. Database exceptions
+        # can contain SQL, table names, connection information,
+        # or other internal implementation details.
         raise HTTPException(
             status_code=500,
             detail="Could not register user.",
@@ -59,6 +65,8 @@ def login(
     user_data: UserLogin,
     db: Session = Depends(get_db),
 ):
+    """Authenticate a user and return an access token."""
+
     token = login_user(
         db=db,
         user_data=user_data,
@@ -79,6 +87,8 @@ def login(
 def get_me(
     current_user=Depends(get_current_user),
 ):
+    """Return the authenticated user's public profile."""
+
     return {
         "id": current_user.id,
         "name": current_user.name,

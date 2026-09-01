@@ -1,5 +1,4 @@
 from app.schemas.query import (
-    QueryRequest,
     QueryResponse,
     EvidenceResponse,
 )
@@ -15,27 +14,54 @@ from app.services.confidence import ConfidenceCalculator
 from app.services.discrepancy_detector import DiscrepancyDetector
 
 
-def process_query(query: QueryRequest) -> QueryResponse:
-    """Process a user question through the query pipeline."""
+def process_query(question: str) -> QueryResponse:
+    """
+    Process a user question through the ClarifyAI pipeline.
 
-    # 1. Normalize the question.
+    Service-layer contract:
+
+        Input:
+            question: normalized/validated question text
+
+        Output:
+            QueryResponse containing the generated answer,
+            confidence, evidence, contradictions,
+            discrepancies, and final status.
+
+    The service does not receive FastAPI request objects.
+    HTTP/API concerns remain in the route layer.
+    """
+
+    # =========================================================
+    # 1. Normalize the question
+    # =========================================================
+
     processed_question = QueryProcessor.normalize(
-        query.question
+        question
     )
 
-    # 2. Validate the question.
+    # =========================================================
+    # 2. Validate the normalized question
+    # =========================================================
+
     QueryProcessor.validate(
         processed_question
     )
 
-    # 3. Retrieve evidence.
+    # =========================================================
+    # 3. Retrieve evidence
+    # =========================================================
+
     retriever = Retriever()
 
     evidence = retriever.retrieve(
         processed_question
     )
 
-    # 4. Generate answer from evidence.
+    # =========================================================
+    # 4. Generate an evidence-grounded answer
+    # =========================================================
+
     answer_generator = AnswerGenerator()
 
     answer = answer_generator.generate(
@@ -43,7 +69,21 @@ def process_query(query: QueryRequest) -> QueryResponse:
         evidence,
     )
 
-    # 5. Verify generated answer against evidence.
+    # =========================================================
+    # 5. Verify the generated answer against evidence
+    #
+    # SemanticEvaluator internally treats:
+    #
+    #   evidence = premise
+    #   answer   = hypothesis
+    #
+    # and returns:
+    #
+    #   ENTAILMENT
+    #   NEUTRAL
+    #   CONTRADICTION
+    # =========================================================
+
     evaluator = SemanticEvaluator()
 
     verification_results = [
@@ -54,13 +94,22 @@ def process_query(query: QueryRequest) -> QueryResponse:
         for item in evidence
     ]
 
-    # 6. Calculate confidence.
+    # =========================================================
+    # 6. Calculate confidence
+    # =========================================================
+
     confidence = ConfidenceCalculator.calculate(
         evidence,
         verification_results,
     )
 
-    # 7. Detect discrepancies between sources.
+    # =========================================================
+    # 7. Detect discrepancies between independent sources
+    #
+    # This is deliberately separate from answer/evidence
+    # contradiction detection.
+    # =========================================================
+
     discrepancy_detector = DiscrepancyDetector()
 
     discrepancies = discrepancy_detector.detect(
@@ -68,8 +117,12 @@ def process_query(query: QueryRequest) -> QueryResponse:
         evidence,
     )
 
-    # 8. Identify evidence that directly contradicts
-    #    the generated answer.
+    # =========================================================
+    # 8. Identify evidence that contradicts the answer
+    #
+    # This is answer-vs-evidence contradiction detection.
+    # =========================================================
+
     contradictions = [
         item.content
         for item, result in zip(
@@ -79,9 +132,9 @@ def process_query(query: QueryRequest) -> QueryResponse:
         if result == SupportLabel.CONTRADICTION
     ]
 
-    # ---------------------------------------------------------
-    # 9. Determine final answer reliability.
-    # ---------------------------------------------------------
+    # =========================================================
+    # 9. Determine final answer reliability
+    # =========================================================
 
     if not evidence:
         status = "uncertain"
@@ -114,7 +167,14 @@ def process_query(query: QueryRequest) -> QueryResponse:
             "sufficient confidence."
         )
 
-    # 10. Convert evidence into API response objects.
+    # =========================================================
+    # 10. Convert internal Evidence objects into API response
+    #     objects.
+    #
+    # The API should not expose internal service/model objects
+    # directly.
+    # =========================================================
+
     evidence_response = [
         EvidenceResponse(
             content=item.content,
@@ -126,7 +186,10 @@ def process_query(query: QueryRequest) -> QueryResponse:
         for item in evidence
     ]
 
-    # 11. Return final response.
+    # =========================================================
+    # 11. Construct the API response
+    # =========================================================
+
     return QueryResponse(
         answer=answer,
         confidence=confidence,

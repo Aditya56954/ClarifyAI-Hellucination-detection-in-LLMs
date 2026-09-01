@@ -1,6 +1,7 @@
 from enum import Enum
 
-from transformers import pipeline
+import torch
+from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
 
 class SupportLabel(str, Enum):
@@ -12,36 +13,62 @@ class SupportLabel(str, Enum):
 
 
 class SemanticEvaluator:
-    """Evaluates the relationship between a claim and evidence."""
+    """Evaluates the relationship between a claim and evidence using BART-MNLI."""
 
-    _classifier = None
+    _tokenizer = None
+    _model = None
 
     def __init__(self):
-        # Load the model only once.
-        if SemanticEvaluator._classifier is None:
-            SemanticEvaluator._classifier = pipeline(
-                "text-classification",
-                model="facebook/bart-large-mnli",
+        # Load the tokenizer and model only once.
+        if SemanticEvaluator._tokenizer is None:
+            SemanticEvaluator._tokenizer = AutoTokenizer.from_pretrained(
+                "facebook/bart-large-mnli"
             )
 
-        self.classifier = SemanticEvaluator._classifier
+        if SemanticEvaluator._model is None:
+            SemanticEvaluator._model = (
+                AutoModelForSequenceClassification.from_pretrained(
+                    "facebook/bart-large-mnli"
+                )
+            )
+
+        self.tokenizer = SemanticEvaluator._tokenizer
+        self.model = SemanticEvaluator._model
 
     def evaluate(
         self,
         claim: str,
         evidence: str,
     ) -> SupportLabel:
+        """
+        Evaluate the relationship between evidence and claim.
 
-        # Compare evidence with the claim.
-        result = self.classifier(
-            f"{evidence} </s></s> {claim}"
+        In the NLI formulation:
+        - evidence is the premise
+        - claim is the hypothesis
+        """
+
+        # Tokenize evidence and claim as an explicit
+        # premise-hypothesis pair.
+        inputs = self.tokenizer(
+            evidence,
+            claim,
+            return_tensors="pt",
+            truncation=True,
         )
 
-        # Handle different pipeline response formats.
-        if isinstance(result, list):
-            result = result[0]
+        # Run BART-MNLI on the encoded premise-hypothesis pair.
+        with torch.no_grad():
+            outputs = self.model(**inputs)
 
-        label = result["label"].lower()
+        # Select the class with the highest model logit.
+        predicted_class = outputs.logits.argmax(dim=-1).item()
+
+        # facebook/bart-large-mnli maps:
+        # 0 -> contradiction
+        # 1 -> neutral
+        # 2 -> entailment
+        label = self.model.config.id2label[predicted_class].lower()
 
         if label == "entailment":
             return SupportLabel.ENTAILMENT

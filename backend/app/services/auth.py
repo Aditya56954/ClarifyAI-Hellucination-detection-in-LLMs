@@ -13,6 +13,7 @@ pwd_context = CryptContext(
 
 
 def hash_password(password: str) -> str:
+    """Hash a user's password before storing it."""
     return pwd_context.hash(password)
 
 
@@ -20,6 +21,7 @@ def verify_password(
     plain_password: str,
     hashed_password: str,
 ) -> bool:
+    """Verify a plaintext password against its stored hash."""
     return pwd_context.verify(
         plain_password,
         hashed_password,
@@ -30,6 +32,7 @@ def register_user(
     db: Session,
     user_data: UserRegister,
 ):
+    """Create a new user with a securely hashed password."""
     password_hash = hash_password(user_data.password)
 
     return create_user(
@@ -44,26 +47,20 @@ def login_user(
     db: Session,
     user_data: UserLogin,
 ) -> str | None:
+    """Authenticate a user and return a JWT access token."""
 
     user = get_user_by_email(
         db=db,
         email=user_data.email,
     )
 
-    print("LOGIN EMAIL:", user_data.email)
-    print("USER FOUND:", user is not None)
-
     if user is None:
         return None
-
-    print("STORED HASH:", user.password_hash)
 
     password_valid = verify_password(
         user_data.password,
         user.password_hash,
     )
-
-    print("PASSWORD VALID:", password_valid)
 
     if not password_valid:
         return None
