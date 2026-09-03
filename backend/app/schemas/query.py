@@ -49,6 +49,42 @@ class EvidenceResponse(BaseModel):
     )
 
 
+class ClaimVerificationResponse(BaseModel):
+    """Verification result for one answer claim against one source."""
+
+    claim: str = Field(
+        ...,
+        min_length=1,
+        description="Individual claim extracted from the generated answer.",
+    )
+
+    evidence: str = Field(
+        ...,
+        min_length=1,
+        description="Evidence used to verify the claim.",
+    )
+
+    source_name: str = Field(
+        ...,
+        min_length=1,
+        description="Source containing the verification evidence.",
+    )
+
+    source_url: str | None = Field(
+        default=None,
+        description="URL of the verification source.",
+    )
+
+    label: Literal[
+        "entailment",
+        "neutral",
+        "contradiction",
+    ] = Field(
+        ...,
+        description="NLI relationship between the evidence and claim.",
+    )
+
+
 class QueryResponse(BaseModel):
     """
     Stable API response contract for ClarifyAI queries.
@@ -73,6 +109,12 @@ class QueryResponse(BaseModel):
     evidence: list[EvidenceResponse] = Field(
         default_factory=list,
         description="Evidence used by the answer pipeline.",
+    )
+
+    # Claim-level verification results.
+    claim_verifications: list[ClaimVerificationResponse] = Field(
+        default_factory=list,
+        description="Individual claim-to-evidence verification results.",
     )
 
     # Semantic contradictions between the generated answer

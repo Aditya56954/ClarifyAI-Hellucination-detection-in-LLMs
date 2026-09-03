@@ -1,17 +1,17 @@
 from app.schemas.query import (
-    QueryResponse,
+    ClaimVerificationResponse,
     EvidenceResponse,
+    QueryResponse,
 )
 
-from app.services.query_processor import QueryProcessor
-from app.services.retriever import Retriever
 from app.services.answer_generator import AnswerGenerator
-from app.services.semantic_evaluator import (
-    SemanticEvaluator,
-    SupportLabel,
-)
+from app.services.claim_extractor import ClaimExtractor
+from app.services.claim_verifier import ClaimVerifier
 from app.services.confidence import ConfidenceCalculator
 from app.services.discrepancy_detector import DiscrepancyDetector
+from app.services.query_processor import QueryProcessor
+from app.services.retriever import Retriever
+from app.services.semantic_evaluator import SupportLabel
 
 
 def process_query(question: str) -> QueryResponse:
@@ -25,11 +25,8 @@ def process_query(question: str) -> QueryResponse:
 
         Output:
             QueryResponse containing the generated answer,
-            confidence, evidence, contradictions,
-            discrepancies, and final status.
-
-    The service does not receive FastAPI request objects.
-    HTTP/API concerns remain in the route layer.
+            claim-level verification, confidence, evidence,
+            contradictions, discrepancies, and final status.
     """
 
     # =========================================================
@@ -70,32 +67,60 @@ def process_query(question: str) -> QueryResponse:
     )
 
     # =========================================================
-    # 5. Verify the generated answer against evidence
-    #
-    # SemanticEvaluator internally treats:
-    #
-    #   evidence = premise
-    #   answer   = hypothesis
-    #
-    # and returns:
-    #
-    #   ENTAILMENT
-    #   NEUTRAL
-    #   CONTRADICTION
+    # 5. Extract individual claims from the answer
     # =========================================================
 
-    evaluator = SemanticEvaluator()
+    claim_extractor = ClaimExtractor()
 
-    verification_results = [
-        evaluator.evaluate(
-            answer,
-            item.content,
-        )
-        for item in evidence
-    ]
+    claims = claim_extractor.extract(
+        answer
+    )
 
     # =========================================================
-    # 6. Calculate confidence
+    # 6. Verify each claim against retrieved evidence
+    # =========================================================
+
+    claim_verifier = ClaimVerifier()
+
+    claim_results = claim_verifier.verify(
+        claims,
+        evidence,
+    )
+
+    # =========================================================
+    # 7. Preserve the existing evidence-level confidence
+    #
+    # Confidence will be redesigned around claim-level signals
+    # in a later phase. For now, reduce the claim results back
+    # to one result per evidence item.
+    # =========================================================
+
+    verification_results = []
+
+    for item in evidence:
+        item_results = [
+            result.label
+            for result in claim_results
+            if result.evidence is item
+        ]
+
+        if SupportLabel.ENTAILMENT in item_results:
+            verification_results.append(
+                SupportLabel.ENTAILMENT
+            )
+
+        elif SupportLabel.CONTRADICTION in item_results:
+            verification_results.append(
+                SupportLabel.CONTRADICTION
+            )
+
+        else:
+            verification_results.append(
+                SupportLabel.NEUTRAL
+            )
+
+    # =========================================================
+    # 8. Calculate confidence
     # =========================================================
 
     confidence = ConfidenceCalculator.calculate(
@@ -104,10 +129,7 @@ def process_query(question: str) -> QueryResponse:
     )
 
     # =========================================================
-    # 7. Detect discrepancies between independent sources
-    #
-    # This is deliberately separate from answer/evidence
-    # contradiction detection.
+    # 9. Detect discrepancies between independent sources
     # =========================================================
 
     discrepancy_detector = DiscrepancyDetector()
@@ -118,22 +140,22 @@ def process_query(question: str) -> QueryResponse:
     )
 
     # =========================================================
-    # 8. Identify evidence that contradicts the answer
-    #
-    # This is answer-vs-evidence contradiction detection.
+    # 10. Identify evidence that contradicts at least one claim
     # =========================================================
 
-    contradictions = [
-        item.content
-        for item, result in zip(
-            evidence,
-            verification_results,
-        )
-        if result == SupportLabel.CONTRADICTION
-    ]
+    contradictions = []
+
+    for result in claim_results:
+        if result.label != SupportLabel.CONTRADICTION:
+            continue
+
+        if result.evidence.content not in contradictions:
+            contradictions.append(
+                result.evidence.content
+            )
 
     # =========================================================
-    # 9. Determine final answer reliability
+    # 11. Determine final answer reliability
     # =========================================================
 
     if not evidence:
@@ -146,7 +168,7 @@ def process_query(question: str) -> QueryResponse:
         status = "conflicting"
         warning = (
             "The retrieved evidence contains information "
-            "that contradicts the generated answer."
+            "that contradicts one or more generated claims."
         )
 
     elif confidence >= 0.75:
@@ -168,11 +190,7 @@ def process_query(question: str) -> QueryResponse:
         )
 
     # =========================================================
-    # 10. Convert internal Evidence objects into API response
-    #     objects.
-    #
-    # The API should not expose internal service/model objects
-    # directly.
+    # 12. Convert evidence into API response objects
     # =========================================================
 
     evidence_response = [
@@ -187,13 +205,29 @@ def process_query(question: str) -> QueryResponse:
     ]
 
     # =========================================================
-    # 11. Construct the API response
+    # 13. Convert claim verification results into API objects
+    # =========================================================
+
+    ClaimVerificationResponse(
+    claim=result.claim,
+    evidence=result.evidence.content,
+    source_name=result.evidence.source_name,
+    source_url=result.evidence.source_url,
+    label=result.label.value,
+    entailment_probability=result.entailment_probability,
+    neutral_probability=result.neutral_probability,
+    contradiction_probability=result.contradiction_probability,
+)
+
+    # =========================================================
+    # 14. Construct the API response
     # =========================================================
 
     return QueryResponse(
         answer=answer,
         confidence=confidence,
         evidence=evidence_response,
+        claim_verifications=claim_verification_response,
         contradictions=contradictions,
         discrepancies=discrepancies,
         status=status,

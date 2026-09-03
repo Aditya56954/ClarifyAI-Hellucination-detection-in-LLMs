@@ -38,6 +38,7 @@ from itertools import combinations
 from typing import Optional
 
 from app.schemas.evidence import Evidence
+from app.services.claim_extractor import ClaimExtractor
 from app.services.semantic_evaluator import (
     SemanticEvaluator,
     SupportLabel,
@@ -363,8 +364,9 @@ class DiscrepancyDetector:
     ANSWER_SIGNAL_WINDOW = 6
 
     def __init__(self):
-        # Load the semantic evaluator once and reuse it.
+        # Load the services once and reuse them.
         self.evaluator = SemanticEvaluator()
+        self.claim_extractor = ClaimExtractor()
 
     def detect(
         self,
@@ -551,71 +553,8 @@ class DiscrepancyDetector:
         self,
         text: str,
     ) -> list[str]:
-        """
-        Break source content into reasonably self-contained claims.
-
-        Web retrieval can return headings, markdown, snippets, and multiple
-        factual statements in one block. Sentence-level comparison keeps
-        the semantic evaluator focused on individual claims.
-        """
-
-        if not text:
-            return []
-
-        # Remove common markdown formatting.
-        text = re.sub(r"[*_#>`]", " ", text)
-
-        # Tables often use pipes between cells.
-        text = text.replace("|", " ")
-
-        # Normalize whitespace.
-        text = re.sub(r"\s+", " ", text).strip()
-
-        if not text:
-            return []
-
-        # Split on sentence boundaries.
-        sentences = re.split(r"(?<=[.!?])\s+|\n+", text)
-
-        claims = []
-
-        for sentence in sentences:
-
-            sentence = re.sub(r"\s+", " ", sentence).strip()
-
-            # Strip leading attribution phrases ("According to X, ...")
-            # so the underlying claim is what actually gets compared.
-            sentence = self.ATTRIBUTION_PREFIX_PATTERN.sub("", sentence).strip()
-
-            if not sentence:
-                continue
-
-            # Interrogative sentences are questions, not assertions - a
-            # scraped social caption that just repeats the question back
-            # ("Quick — what's the capital of Australia?") is never
-            # usable evidence.
-            if "?" in sentence:
-                continue
-
-            # "[...]" marks a splice of unrelated, non-contiguous
-            # fragments (nav menus, photo credit lists, table dumps)
-            # glued together by the scraper. This is not a coherent
-            # single claim and must not be compared as one.
-            if self.NOISE_MARKER_PATTERN.search(sentence):
-                continue
-
-            if len(sentence) < self.MIN_SENTENCE_LENGTH:
-                # Short sentences are usually noise (headings, nav
-                # labels), but a short sentence that looks like a real,
-                # concrete factual statement (has enough word structure
-                # and contains a number) is still kept - this avoids
-                # discarding claims like "India's GDP is $0."
-                if not self._looks_like_short_factual_claim(sentence):
-                    continue
-
-            claims.append(sentence)
-
-        return self._deduplicate_claims(claims)
+        # Keep this wrapper for existing callers.
+        return self.claim_extractor.extract(text)
 
     def _looks_like_short_factual_claim(self, sentence: str) -> bool:
         """
